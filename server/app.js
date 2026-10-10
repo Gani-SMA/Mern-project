@@ -63,7 +63,7 @@ app.use('/api', async (req, res, next) => {
 });
 
 // Health Check / Connection Status
-app.get('/api/health', (req, res) => {
+const healthHandler = (req, res) => {
   const readyState = mongoose.connection.readyState;
   const states = {
     0: 'disconnected',
@@ -82,13 +82,23 @@ app.get('/api/health', (req, res) => {
     },
     serverTime: new Date().toISOString(),
   });
-});
+};
 
-// API Routes
+app.get('/api/health', healthHandler);
+app.get('/health', healthHandler);
+
+// API Routes (supports both /api/* and /* for Vercel serverless functions)
 app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
+
 app.use('/api/tickets', ticketsRoutes);
+app.use('/tickets', ticketsRoutes);
+
 app.use('/api/articles', articlesRoutes);
+app.use('/articles', articlesRoutes);
+
 app.use('/api/analytics', analyticsRoutes);
+app.use('/analytics', analyticsRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
