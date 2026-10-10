@@ -73,29 +73,8 @@ export const TrackSection = () => {
               </button>
             </div>
           </div>
-          <div className="sample-tickets-list">
-            <span>Sample reference dockets:</span>
-            <button
-              type="button"
-              className="sample-id-link"
-              onClick={() => handleSearch("RES-2026-8812")}
-            >
-              RES-2026-8812 (Escalated to Ombudsman)
-            </button>
-            <button
-              type="button"
-              className="sample-id-link"
-              onClick={() => handleSearch("RES-2026-4402")}
-            >
-              RES-2026-4402 (Settled & Closed)
-            </button>
-            <button
-              type="button"
-              className="sample-id-link"
-              onClick={() => handleSearch("RES-2026-1094")}
-            >
-              RES-2026-1094 (In Investigation)
-            </button>
+          <div className="track-hint-text">
+            <span>Enter your formal reference number as issued upon dispute registration (e.g., from your confirmation docket).</span>
           </div>
         </form>
       </div>

@@ -111,9 +111,9 @@ export const ResolveBotWidget = () => {
               <button
                 type="button"
                 className="quick-chip"
-                onClick={() => handleSendMessage("Check status of RES-2026-8812")}
+                onClick={() => handleSendMessage("How do I verify the statutory status of my dispute?")}
               >
-                Inquire on Docket RES-2026-8812
+                Check Dispute Status & Milestones
               </button>
               <button
                 type="button"

@@ -75,23 +75,6 @@ export const SubmitComplaintSection = () => {
     showToast("Dossier Structured", "Grievance structured in accordance with arbitration standards.", "info");
   };
 
-  const handleFillSample = () => {
-    setFormData({
-      custName: "Jonathan Sterling",
-      custEmail: "j.sterling@enterprise-group.com",
-      custPhone: "+1 (555) 918-2731",
-      orderRef: "INV-99218-ENT",
-      category: "Billing & Payments",
-      priority: "High",
-      title: "Overcharge Dispute: Unauthorized Surcharge Added to Invoice",
-      description: "On Oct 6th, invoice INV-99218-ENT included an arbitrary $185.00 surcharge for priority bandwidth that was never ordered or authorized in our Master Service Agreement. We request an amended invoice and refund credit.",
-      incidentDate: "2026-10-06",
-      desiredResolution: "Full Refund"
-    });
-    setErrors({});
-    showToast("Sample Data Loaded", "Form pre-filled with formal dispute scenario.", "info");
-  };
-
   const handleFileChange = (e) => {
     if (e.target.files) {
       addFiles(e.target.files);
@@ -159,9 +142,6 @@ export const SubmitComplaintSection = () => {
             Provide formal particulars to commence statutory investigation under our binding resolution charter.
           </p>
         </div>
-        <button type="button" className="btn btn-outline" onClick={handleFillSample}>
-          Load Sample Case
-        </button>
       </div>
 
       <div className="form-layout-grid">

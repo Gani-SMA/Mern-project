@@ -1,5 +1,5 @@
 import React from "react";
-import { Sun, Moon, Lock, Database, LogIn, LogOut, User as UserIcon } from "lucide-react";
+import { Sun, Moon, Lock, LogIn, LogOut, User as UserIcon } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
 export const Navbar = () => {
@@ -88,18 +88,6 @@ export const Navbar = () => {
         </nav>
 
         <div className="nav-actions">
-          {/* Live MongoDB Atlas Indicator */}
-          <div 
-            className="db-status-pill" 
-            title={`MongoDB Atlas Database: ${dbHealth.name} (${dbHealth.status})`}
-          >
-            <Database size={13} className={dbHealth.connected ? "text-emerald" : "text-amber"} />
-            <span className="db-status-text">
-              {dbHealth.connected ? "Atlas Connected" : "Connecting DB"}
-            </span>
-            <span className={`db-dot ${dbHealth.connected ? "db-dot-live" : "db-dot-waiting"}`}></span>
-          </div>
-
           <button
             onClick={toggleTheme}
             className="icon-btn"

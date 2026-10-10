@@ -421,14 +421,13 @@ export const AppProvider = ({ children }) => {
       if (res.ok) {
         const data = await res.json();
         setTickets(data.tickets);
-        showToast("Data Reset", "Sample complaint database restored in MongoDB Atlas.", "info");
+        showToast("Ledger Synchronized", "Dispute database synchronized with MongoDB Atlas.", "info");
         return;
       }
     } catch (err) {
-      console.error("API reset error:", err);
+      console.error("API sync error:", err);
     }
-    setTickets(INITIAL_TICKETS);
-    showToast("Data Reset", "Sample complaint database restored.", "info");
+    showToast("Ledger Synchronized", "Dispute database reloaded.", "info");
   };
 
   // ANALYTICS COMPUTATION

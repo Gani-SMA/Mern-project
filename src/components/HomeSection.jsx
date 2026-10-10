@@ -78,18 +78,18 @@ export const HomeSection = () => {
             </button>
           </form>
           <div className="masthead-tags-row">
-            <span>Quick Reference:</span>
-            <button type="button" className="masthead-tag-btn" onClick={() => handleQuickTag("RES-2026-8812")}>
-              RES-2026-8812
-            </button>
-            <button type="button" className="masthead-tag-btn" onClick={() => handleQuickTag("RES-2026-4402")}>
-              RES-2026-4402
-            </button>
-            <button type="button" className="masthead-tag-btn" onClick={() => handleQuickTag("Billing Dispute")}>
-              Billing Inquiries
+            <span>Jurisdictions:</span>
+            <button type="button" className="masthead-tag-btn" onClick={() => handleQuickTag("Billing")}>
+              Billing & Charges
             </button>
             <button type="button" className="masthead-tag-btn" onClick={() => handleQuickTag("Delivery")}>
-              Transit & Delivery
+              Transit & Logistics
+            </button>
+            <button type="button" className="masthead-tag-btn" onClick={() => handleQuickTag("Technical")}>
+              Software & Access
+            </button>
+            <button type="button" className="masthead-tag-btn" onClick={() => handleQuickTag("Quality")}>
+              Quality & Warranty
             </button>
           </div>
         </div>
