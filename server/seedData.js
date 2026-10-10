@@ -1,6 +1,6 @@
 import { Ticket } from './models/Ticket.js';
 import { Article } from './models/Article.js';
-import { INITIAL_TICKETS, KB_ARTICLES } from '../src/data/initialData.js';
+import { INITIAL_TICKETS, KB_ARTICLES } from './data/initialData.js';
 
 export async function seedDatabaseIfEmpty() {
   try {

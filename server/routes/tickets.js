@@ -1,6 +1,6 @@
 import express from 'express';
 import { Ticket } from '../models/Ticket.js';
-import { INITIAL_TICKETS } from '../../src/data/initialData.js';
+import { INITIAL_TICKETS } from '../data/initialData.js';
 
 const router = express.Router();
 
