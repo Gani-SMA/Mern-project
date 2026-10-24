@@ -2,75 +2,39 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { connectToDatabase } from './config/db.js';
+
+// Route imports
 import authRoutes from './routes/auth.js';
-import ticketsRoutes from './routes/tickets.js';
-import articlesRoutes from './routes/articles.js';
-import analyticsRoutes from './routes/analytics.js';
-import { seedDatabaseIfEmpty } from './seedData.js';
+import adminRoutes from './routes/admin.js';
+import companyRoutes from './routes/companies.js';
+import ticketRoutes from './routes/tickets.js';
+import faqRoutes from './routes/articles.js';
+import categoryRoutes from './routes/analytics.js';
 
 dotenv.config();
 
 const app = express();
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/icl_db';
 
-// Middleware
+// ─── Middleware ───
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// Mongoose Connection Cache for Serverless (Vercel) & Local
-let cachedDb = null;
-let isSeeded = false;
-
-export async function connectToDatabase() {
-  if (cachedDb && mongoose.connection.readyState === 1) {
-    return cachedDb;
-  }
-
-  if (mongoose.connection.readyState === 2) {
-    // connecting... wait
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (mongoose.connection.readyState === 1) return mongoose.connection;
-  }
-
-  try {
-    const db = await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 8000,
-    });
-    cachedDb = db;
-
-    if (!isSeeded) {
-      await seedDatabaseIfEmpty();
-      isSeeded = true;
-    }
-
-    return db;
-  } catch (err) {
-    console.error('Database connection error:', err.message);
-    throw err;
-  }
-}
-
-// Auto-connect middleware for all /api requests
+// ─── Auto-connect DB for all /api requests ───
 app.use('/api', async (req, res, next) => {
   try {
     await connectToDatabase();
     next();
   } catch (err) {
-    // If db fails, continue so health check or error handling can respond
     next();
   }
 });
 
-// Health Check / Connection Status
+// ─── Health Check ───
 const healthHandler = (req, res) => {
   const readyState = mongoose.connection.readyState;
-  const states = {
-    0: 'disconnected',
-    1: 'connected',
-    2: 'connecting',
-    3: 'disconnecting',
-  };
+  const states = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
 
   res.json({
     status: readyState === 1 ? 'ok' : 'degraded',
@@ -87,20 +51,27 @@ const healthHandler = (req, res) => {
 app.get('/api/health', healthHandler);
 app.get('/health', healthHandler);
 
-// API Routes (supports both /api/* and /* for Vercel serverless functions)
+// ─── API Routes ───
+
+// Auth (login, google, me)
 app.use('/api/auth', authRoutes);
-app.use('/auth', authRoutes);
 
-app.use('/api/tickets', ticketsRoutes);
-app.use('/tickets', ticketsRoutes);
+// Super Admin panel
+app.use('/api/admin', adminRoutes);
 
-app.use('/api/articles', articlesRoutes);
-app.use('/articles', articlesRoutes);
+// Company-scoped routes (public info, dashboard, branding, employees)
+app.use('/api/companies/:slug', companyRoutes);
 
-app.use('/api/analytics', analyticsRoutes);
-app.use('/analytics', analyticsRoutes);
+// Company-scoped tickets
+app.use('/api/companies/:slug/tickets', ticketRoutes);
 
-// Global Error Handler
+// Company-scoped FAQs
+app.use('/api/companies/:slug/faqs', faqRoutes);
+
+// Company-scoped categories
+app.use('/api/companies/:slug/categories', categoryRoutes);
+
+// ─── Global Error Handler ───
 app.use((err, req, res, next) => {
   console.error('Unhandled Server Error:', err);
   res.status(500).json({ error: 'Internal Server Error', message: err.message });

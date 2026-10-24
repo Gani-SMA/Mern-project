@@ -1,274 +1,382 @@
 import express from 'express';
 import { Ticket } from '../models/Ticket.js';
-import { INITIAL_TICKETS } from '../data/initialData.js';
+import { Company } from '../models/Company.js';
+import { authenticate, authorize, authorizeCompany } from '../middleware/auth.js';
 
-const router = express.Router();
+const router = express.Router({ mergeParams: true });
 
-// Helper to format timestamp
-const getTimeStr = () => {
-  return new Date().toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    month: 'short',
-    day: 'numeric',
-  });
+// ─── Helper: Get company from slug ───
+const getCompany = async (req, res) => {
+  if (req.company) return req.company;
+  const company = await Company.findOne({ slug: req.params.slug });
+  if (!company) {
+    res.status(404).json({ error: 'Company not found' });
+    return null;
+  }
+  req.company = company;
+  return company;
 };
 
-// GET all tickets
-router.get('/', async (req, res) => {
+// ─── GET /api/companies/:slug/tickets ─── All company tickets (developer + employee)
+router.get('/', authenticate, authorize('developer', 'employee', 'superadmin'), authorizeCompany, async (req, res) => {
   try {
-    const { status, category, priority, search } = req.query;
-    const filter = {};
+    const company = await getCompany(req, res);
+    if (!company) return;
 
-    if (status && status !== 'ALL') {
-      filter.status = status;
-    }
-    if (category && category !== 'ALL') {
-      filter.category = category;
-    }
-    if (priority && priority !== 'ALL') {
-      filter.priority = priority;
-    }
+    const { status, priority, category, search, page = 1, limit = 50 } = req.query;
+    const filter = { company: company._id };
+
+    if (status) filter.status = status;
+    if (priority) filter.priority = priority;
+    if (category) filter.category = category;
     if (search) {
-      const regex = new RegExp(search.trim(), 'i');
       filter.$or = [
-        { id: regex },
-        { title: regex },
-        { 'customer.name': regex },
-        { 'customer.orderRef': regex },
-        { description: regex },
+        { ticketId: { $regex: search, $options: 'i' } },
+        { subject: { $regex: search, $options: 'i' } },
+        { 'customer.name': { $regex: search, $options: 'i' } },
+        { 'customer.email': { $regex: search, $options: 'i' } },
       ];
     }
 
-    const tickets = await Ticket.find(filter).sort({ createdAt: -1 });
-    res.json(tickets);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [tickets, total] = await Promise.all([
+      Ticket.find(filter)
+        .populate('assignedTo', 'name email department')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      Ticket.countDocuments(filter),
+    ]);
+
+    res.json({ tickets, total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)) });
   } catch (err) {
-    console.error('Error fetching tickets:', err);
-    res.status(500).json({ error: 'Failed to retrieve tickets from database' });
+    console.error('List tickets error:', err);
+    res.status(500).json({ error: 'Failed to fetch tickets' });
   }
 });
 
-// GET single ticket by ID
-router.get('/:id', async (req, res) => {
+// ─── GET /api/companies/:slug/tickets/mine ─── Customer's own tickets
+router.get('/mine', authenticate, authorize('customer'), async (req, res) => {
   try {
-    const ticket = await Ticket.findOne({ id: req.params.id.toUpperCase() });
-    if (!ticket) {
-      return res.status(404).json({ error: 'Ticket docket not found' });
+    const company = await getCompany(req, res);
+    if (!company) return;
+
+    const tickets = await Ticket.find({
+      company: company._id,
+      'customer.userId': req.userId,
+    })
+      .select('-messages.isInternal') // Don't expose internal flag
+      .sort({ createdAt: -1 });
+
+    // Filter out internal messages
+    const sanitized = tickets.map((t) => {
+      const obj = t.toObject();
+      obj.messages = (obj.messages || []).filter((m) => !m.isInternal);
+      return obj;
+    });
+
+    res.json(sanitized);
+  } catch (err) {
+    console.error('My tickets error:', err);
+    res.status(500).json({ error: 'Failed to fetch your tickets' });
+  }
+});
+
+// ─── POST /api/companies/:slug/tickets ─── File new complaint (customer)
+router.post('/', authenticate, authorize('customer'), async (req, res) => {
+  try {
+    const company = await getCompany(req, res);
+    if (!company) return;
+
+    if (company.status === 'suspended') {
+      return res.status(403).json({ error: 'This company is currently not accepting complaints' });
     }
-    res.json(ticket);
-  } catch (err) {
-    console.error('Error fetching ticket by ID:', err);
-    res.status(500).json({ error: 'Failed to retrieve ticket record' });
-  }
-});
 
-// POST create new ticket
-router.post('/', async (req, res) => {
-  try {
-    const ticketData = req.body;
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const newId = `RES-2026-${randomNum}`;
+    const { category, priority, subject, description, phone } = req.body;
 
-    let slaHours = 24;
-    if (ticketData.priority === 'Critical') slaHours = 6;
-    else if (ticketData.priority === 'High') slaHours = 12;
-    else if (ticketData.priority === 'Medium') slaHours = 24;
-    else slaHours = 48;
+    if (!subject || !subject.trim() || !description || !description.trim()) {
+      return res.status(400).json({ error: 'Subject line and detailed description are required' });
+    }
 
-    const now = new Date();
-    const deadline = new Date(now.getTime() + slaHours * 60 * 60 * 1000);
+    const resolvedCategory = (category && category.trim()) || 'General Support';
+    const ticketId = await company.generateTicketId();
 
-    const newTicket = new Ticket({
-      id: newId,
-      title: ticketData.title,
-      category: ticketData.category,
-      priority: ticketData.priority || 'Medium',
-      status: 'Open',
-      slaHours: slaHours,
-      deadline: deadline,
+    const ticket = await Ticket.create({
+      ticketId,
+      company: company._id,
       customer: {
-        name: ticketData.custName || ticketData.customer?.name || 'Anonymous Complainant',
-        email: ticketData.custEmail || ticketData.customer?.email || 'N/A',
-        phone: ticketData.custPhone || ticketData.customer?.phone || 'N/A',
-        orderRef: ticketData.orderRef || ticketData.customer?.orderRef || 'N/A',
+        userId: req.userId,
+        name: req.user.name,
+        email: req.user.email,
+        phone: phone || req.user.phone || '',
       },
-      incidentDate: ticketData.incidentDate || now.toISOString().split('T')[0],
-      desiredResolution: ticketData.desiredResolution || 'Standard Remediation',
-      description: ticketData.description,
-      securityHash: '0x' + Math.random().toString(16).substr(2, 8).toUpperCase(),
-      assignedOfficer: 'Pending Automated Assignment',
-      sentiment: ticketData.sentiment || 'Neutral Grievance',
-      attachments: ticketData.attachments || [],
-      csat: null,
+      category: resolvedCategory,
+      priority: priority || 'Medium',
+      subject: subject.trim(),
+      description,
       timeline: [
         {
-          step: 'Grievance Lodged',
-          time: getTimeStr(),
-          desc: 'Ticket registered into ResolveIT Redressal Pipeline via MongoDB Atlas.',
+          action: 'Ticket Created',
+          by: req.user.name,
+          details: `Complaint filed under "${category}" with ${priority || 'Medium'} priority.`,
         },
       ],
-      messages: [],
     });
 
-    const saved = await newTicket.save();
-    res.status(201).json(saved);
+    res.status(201).json(ticket);
   } catch (err) {
-    console.error('Error creating ticket:', err);
-    res.status(500).json({ error: 'Failed to record grievance in database' });
+    console.error('Create ticket error:', err);
+    res.status(500).json({ error: 'Failed to create ticket' });
   }
 });
 
-// PUT update ticket
-router.put('/:id', async (req, res) => {
+// ─── GET /api/companies/:slug/tickets/:ticketId/track ─── Public status check (limited data)
+router.get('/:ticketId/track', async (req, res) => {
   try {
-    const { id } = req.params;
-    const updates = req.body;
-
-    const ticket = await Ticket.findOne({ id: id.toUpperCase() });
-    if (!ticket) {
-      return res.status(404).json({ error: 'Ticket docket not found' });
+    const company = await Company.findOne({ slug: req.params.slug });
+    if (!company) {
+      return res.status(404).json({ error: 'Company not found' });
     }
 
-    const timeStr = getTimeStr();
+    const ticket = await Ticket.findOne({
+      ticketId: req.params.ticketId,
+      company: company._id,
+    }).select('ticketId subject status priority category createdAt slaDeadline timeline');
 
-    if (updates.status && updates.status !== ticket.status) {
-      ticket.timeline.push({
-        step: `Status Changed to ${updates.status}`,
-        time: timeStr,
-        desc: `Case state updated to ${updates.status} by ${updates.assignedOfficer || 'Support Officer'}.`,
-      });
-      ticket.status = updates.status;
-    }
-
-    if (updates.priority && updates.priority !== ticket.priority) {
-      ticket.timeline.push({
-        step: `Priority Adjusted to ${updates.priority}`,
-        time: timeStr,
-        desc: `Severity level reclassified to ${updates.priority}.`,
-      });
-      ticket.priority = updates.priority;
-    }
-
-    if (updates.assignedOfficer) {
-      ticket.assignedOfficer = updates.assignedOfficer;
-    }
-
-    if (updates.desiredResolution) {
-      ticket.desiredResolution = updates.desiredResolution;
-    }
-
-    const updated = await ticket.save();
-    res.json(updated);
-  } catch (err) {
-    console.error('Error updating ticket:', err);
-    res.status(500).json({ error: 'Failed to update ticket dossier' });
-  }
-});
-
-// POST add message
-router.post('/:id/messages', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { sender, author, text, isInternal } = req.body;
-
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: 'Message text cannot be empty' });
-    }
-
-    const ticket = await Ticket.findOne({ id: id.toUpperCase() });
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const newMsg = {
-      id: 'msg-' + Date.now(),
-      sender: sender || 'customer',
-      author: author || 'Authorized Party',
-      timestamp: getTimeStr(),
+    res.json(ticket);
+  } catch (err) {
+    console.error('Track ticket error:', err);
+    res.status(500).json({ error: 'Failed to track ticket' });
+  }
+});
+
+// ─── GET /api/companies/:slug/tickets/:ticketId ─── Ticket detail (scoped)
+router.get('/:ticketId', authenticate, async (req, res) => {
+  try {
+    const company = await getCompany(req, res);
+    if (!company) return;
+
+    const ticket = await Ticket.findOne({
+      ticketId: req.params.ticketId,
+      company: company._id,
+    }).populate('assignedTo', 'name email department');
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Customers can only see their own tickets
+    if (req.user.role === 'customer') {
+      if (ticket.customer.userId.toString() !== req.userId.toString()) {
+        return res.status(403).json({ error: 'Access denied. This is not your ticket.' });
+      }
+      // Filter out internal messages for customer
+      const obj = ticket.toObject();
+      obj.messages = (obj.messages || []).filter((m) => !m.isInternal);
+      return res.json(obj);
+    }
+
+    // Developer/Employee must belong to this company
+    if (['developer', 'employee'].includes(req.user.role)) {
+      if (!req.user.company || req.user.company.toString() !== company._id.toString()) {
+        return res.status(403).json({ error: 'Access denied.' });
+      }
+    }
+
+    res.json(ticket);
+  } catch (err) {
+    console.error('Ticket detail error:', err);
+    res.status(500).json({ error: 'Failed to fetch ticket' });
+  }
+});
+
+// ─── PUT /api/companies/:slug/tickets/:ticketId ─── Update ticket (developer + employee)
+router.put('/:ticketId', authenticate, authorize('developer', 'employee', 'superadmin'), authorizeCompany, async (req, res) => {
+  try {
+    const company = await getCompany(req, res);
+    if (!company) return;
+
+    const ticket = await Ticket.findOne({
+      ticketId: req.params.ticketId,
+      company: company._id,
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    const { status, priority, assignedTo, category } = req.body;
+    const changes = [];
+
+    if (status && status !== ticket.status) {
+      changes.push(`Status changed from "${ticket.status}" to "${status}"`);
+      ticket.status = status;
+    }
+    if (priority && priority !== ticket.priority) {
+      changes.push(`Priority changed from "${ticket.priority}" to "${priority}"`);
+      ticket.priority = priority;
+    }
+    if (assignedTo !== undefined) {
+      ticket.assignedTo = assignedTo || null;
+      changes.push('Ticket assignment updated');
+    }
+    if (category) {
+      ticket.category = category;
+    }
+
+    if (changes.length > 0) {
+      ticket.timeline.push({
+        action: 'Ticket Updated',
+        by: req.user.name,
+        details: changes.join('. '),
+      });
+    }
+
+    await ticket.save();
+    const populated = await Ticket.findById(ticket._id).populate('assignedTo', 'name email department');
+    res.json(populated);
+  } catch (err) {
+    console.error('Update ticket error:', err);
+    res.status(500).json({ error: 'Failed to update ticket' });
+  }
+});
+
+// ─── POST /api/companies/:slug/tickets/:ticketId/messages ─── Add message
+router.post('/:ticketId/messages', authenticate, async (req, res) => {
+  try {
+    const company = await getCompany(req, res);
+    if (!company) return;
+
+    const ticket = await Ticket.findOne({
+      ticketId: req.params.ticketId,
+      company: company._id,
+    });
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Customers can only message on their own tickets
+    if (req.user.role === 'customer') {
+      if (ticket.customer.userId.toString() !== req.userId.toString()) {
+        return res.status(403).json({ error: 'Access denied.' });
+      }
+    }
+
+    const { text, isInternal } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'Message text is required' });
+    }
+
+    // Customers cannot send internal notes
+    const internal = req.user.role === 'customer' ? false : Boolean(isInternal);
+
+    const message = {
+      sender: req.userId,
+      senderName: req.user.name,
+      senderRole: req.user.role === 'developer' ? 'developer' : req.user.role === 'employee' ? 'employee' : 'customer',
       text: text.trim(),
-      isInternal: Boolean(isInternal),
+      isInternal: internal,
     };
 
-    ticket.messages.push(newMsg);
+    ticket.messages.push(message);
+    ticket.timeline.push({
+      action: internal ? 'Internal Note Added' : 'Message Sent',
+      by: req.user.name,
+      details: internal ? 'Internal note added to case file.' : `Reply from ${req.user.role}.`,
+    });
+
     await ticket.save();
 
-    res.status(201).json(newMsg);
+    // Return the new message
+    const newMessage = ticket.messages[ticket.messages.length - 1];
+    res.status(201).json(newMessage);
   } catch (err) {
-    console.error('Error adding message:', err);
-    res.status(500).json({ error: 'Failed to post message to case file' });
+    console.error('Add message error:', err);
+    res.status(500).json({ error: 'Failed to add message' });
   }
 });
 
-// POST escalate ticket
-router.post('/:id/escalate', async (req, res) => {
+// ─── POST /api/companies/:slug/tickets/:ticketId/escalate ─── Escalate ticket
+router.post('/:ticketId/escalate', authenticate, authorize('developer', 'employee', 'superadmin'), authorizeCompany, async (req, res) => {
   try {
-    const { id } = req.params;
-    const { reason } = req.body;
+    const company = await getCompany(req, res);
+    if (!company) return;
 
-    const ticket = await Ticket.findOne({ id: id.toUpperCase() });
+    const ticket = await Ticket.findOne({
+      ticketId: req.params.ticketId,
+      company: company._id,
+    });
+
     if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const timeStr = getTimeStr();
+    const { reason } = req.body;
+
     ticket.status = 'Escalated';
     ticket.priority = 'Critical';
-    ticket.assignedOfficer = 'Priya Patel (Consumer Ombudsman)';
     ticket.timeline.push({
-      step: 'Direct Escalation to Executive Ombudsman',
-      time: timeStr,
-      desc: reason || 'Customer invoked statutory escalation clause. Fast-tracked for executive dispute resolution.',
+      action: 'Ticket Escalated',
+      by: req.user.name,
+      details: reason || 'Escalated for immediate attention.',
     });
 
-    const updated = await ticket.save();
-    res.json(updated);
+    await ticket.save();
+    res.json(ticket);
   } catch (err) {
-    console.error('Error escalating ticket:', err);
+    console.error('Escalate ticket error:', err);
     res.status(500).json({ error: 'Failed to escalate ticket' });
   }
 });
 
-// POST CSAT rating
-router.post('/:id/csat', async (req, res) => {
+// ─── POST /api/companies/:slug/tickets/:ticketId/csat ─── Submit CSAT rating (customer)
+router.post('/:ticketId/csat', authenticate, authorize('customer'), async (req, res) => {
   try {
-    const { id } = req.params;
-    const { rating, feedback } = req.body;
+    const company = await getCompany(req, res);
+    if (!company) return;
 
-    const ticket = await Ticket.findOne({ id: id.toUpperCase() });
-    if (!ticket) {
-      return res.status(404).json({ error: 'Ticket not found' });
-    }
-
-    const timeStr = getTimeStr();
-    ticket.csat = {
-      stars: rating,
-      feedback: feedback || 'No written comment provided',
-      submittedAt: new Date(),
-    };
-    ticket.timeline.push({
-      step: 'Customer CSAT Verified',
-      time: timeStr,
-      desc: `Customer rated resolution ${rating}/5 stars.`,
+    const ticket = await Ticket.findOne({
+      ticketId: req.params.ticketId,
+      company: company._id,
+      'customer.userId': req.userId,
     });
 
-    const updated = await ticket.save();
-    res.json(updated);
-  } catch (err) {
-    console.error('Error submitting CSAT:', err);
-    res.status(500).json({ error: 'Failed to record customer satisfaction feedback' });
-  }
-});
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found or access denied' });
+    }
 
-// POST reset tickets in MongoDB to default baseline
-router.post('/reset', async (req, res) => {
-  try {
-    await Ticket.deleteMany({});
-    await Ticket.insertMany(INITIAL_TICKETS);
-    const resetTickets = await Ticket.find({}).sort({ createdAt: -1 });
-    res.json({ message: 'Database tickets restored to official initial baseline', tickets: resetTickets });
+    if (!['Resolved', 'Closed'].includes(ticket.status)) {
+      return res.status(400).json({ error: 'CSAT can only be submitted for resolved tickets' });
+    }
+
+    const { rating, feedback } = req.body;
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+    }
+
+    ticket.csat = {
+      rating,
+      feedback: feedback || '',
+      submittedAt: new Date(),
+    };
+
+    ticket.timeline.push({
+      action: 'CSAT Submitted',
+      by: req.user.name,
+      details: `Customer rated ${rating}/5 stars.`,
+    });
+
+    await ticket.save();
+    res.json(ticket);
   } catch (err) {
-    console.error('Error resetting tickets:', err);
-    res.status(500).json({ error: 'Failed to reset ticket records' });
+    console.error('CSAT error:', err);
+    res.status(500).json({ error: 'Failed to submit feedback' });
   }
 });
 

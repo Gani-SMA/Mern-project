@@ -1,56 +1,81 @@
 import React from "react";
-import { AppProvider, useApp } from "./context/AppContext";
-import { Navbar } from "./components/Navbar";
-import { HomeSection } from "./components/HomeSection";
-import { SubmitComplaintSection } from "./components/SubmitComplaintSection";
-import { TicketHubSection } from "./components/TicketHubSection";
-import { TrackSection } from "./components/TrackSection";
-import { KnowledgeBaseSection } from "./components/KnowledgeBaseSection";
-import { OperationsHubSection } from "./components/OperationsHubSection";
-import { TicketDetailModal } from "./components/TicketDetailModal";
-import { ArticleModal } from "./components/ArticleModal";
-import { SuccessModal } from "./components/SuccessModal";
-import { AuthModal } from "./components/AuthModal";
-import { ResolveBotWidget } from "./components/ResolveBotWidget";
-import { ToastContainer } from "./components/ToastContainer";
-import { Footer } from "./components/Footer";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider } from "./context/AuthContext";
+import { ProtectedRoute } from "./components/common/ProtectedRoute";
 
-const MainContent = () => {
-  const { activeTab } = useApp();
+// Layouts
+import { AdminLayout } from "./pages/admin/AdminLayout";
+import { PortalLayout } from "./pages/portal/PortalLayout";
 
-  return (
-    <div className="app-layout">
-      <Navbar />
+// Public pages
+import { LandingPage } from "./pages/LandingPage";
+import { ServicePage } from "./pages/service/ServicePage";
+import { TrackTicket } from "./pages/service/TrackTicket";
 
-      <main className="main-content">
-        {/* Operations Dashboard is the default landing view */}
-        {activeTab === "analytics" && <OperationsHubSection />}
-        {activeTab === "home" && <HomeSection />}
-        {activeTab === "submit" && <SubmitComplaintSection />}
-        {activeTab === "tickets" && <TicketHubSection />}
-        {activeTab === "track" && <TrackSection />}
-        {activeTab === "kb" && <KnowledgeBaseSection />}
-      </main>
+// Admin pages
+import { AdminDashboard } from "./pages/admin/AdminDashboard";
+import { CompanyManagement } from "./pages/admin/CompanyManagement";
+import { DeveloperManagement } from "./pages/admin/DeveloperManagement";
 
-      {/* Modals & Overlays */}
-      <AuthModal />
-      <TicketDetailModal />
-      <ArticleModal />
-      <SuccessModal />
+// Portal pages
+import { PortalDashboard } from "./pages/portal/PortalDashboard";
+import { TicketList } from "./pages/portal/TicketList";
+import { TicketDetail } from "./pages/portal/TicketDetail";
+import { EmployeeManagement } from "./pages/portal/EmployeeManagement";
+import { ServicePageCustomizer } from "./pages/portal/ServicePageCustomizer";
 
-      {/* AI Assistant & Notifications */}
-      <ResolveBotWidget />
-      <ToastContainer />
-
-      <Footer />
-    </div>
-  );
-};
+// Service pages (customer)
+import { ComplaintForm } from "./pages/service/ComplaintForm";
+import { MyComplaints } from "./pages/service/MyComplaints";
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainContent />
-    </AppProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          {/* ─── Public Routes ─── */}
+          <Route path="/" element={<LandingPage />} />
+
+          {/* Customer Service Pages (company-branded) */}
+          <Route path="/s/:slug" element={<ServicePage />} />
+          <Route path="/s/:slug/track/:ticketId" element={<TrackTicket />} />
+          <Route path="/s/:slug/complaint" element={<ComplaintForm />} />
+          <Route path="/s/:slug/my-complaints" element={<MyComplaints />} />
+
+          {/* ─── Super Admin Panel ─── */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute roles={["superadmin"]}>
+                <AdminLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<AdminDashboard />} />
+            <Route path="companies" element={<CompanyManagement />} />
+            <Route path="developers" element={<DeveloperManagement />} />
+          </Route>
+
+          {/* ─── Company Portal (Developer + Employees) ─── */}
+          <Route
+            path="/portal/:slug"
+            element={
+              <ProtectedRoute roles={["developer", "employee"]}>
+                <PortalLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<PortalDashboard />} />
+            <Route path="tickets" element={<TicketList />} />
+            <Route path="tickets/:ticketId" element={<TicketDetail />} />
+            <Route path="employees" element={<EmployeeManagement />} />
+            <Route path="customize" element={<ServicePageCustomizer />} />
+          </Route>
+
+          {/* Catch-all redirect */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
