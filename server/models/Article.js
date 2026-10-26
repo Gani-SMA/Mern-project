@@ -1,36 +1,33 @@
 import mongoose from 'mongoose';
 
-const articleSchema = new mongoose.Schema(
+const faqSchema = new mongoose.Schema(
   {
-    id: {
-      type: String,
+    company: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Company',
       required: true,
-      unique: true,
       index: true,
     },
     category: {
       type: String,
-      required: true,
+      default: 'General',
     },
-    title: {
+    question: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    answer: {
       type: String,
       required: true,
     },
-    snippet: {
-      type: String,
-      required: true,
-    },
-    body: {
-      type: String,
-      required: true,
-    },
-    readTime: {
-      type: String,
-      default: '3 min read',
-    },
-    likes: {
+    order: {
       type: Number,
       default: 0,
+    },
+    isVisible: {
+      type: Boolean,
+      default: true,
     },
   },
   {
@@ -38,4 +35,7 @@ const articleSchema = new mongoose.Schema(
   }
 );
 
-export const Article = mongoose.model('Article', articleSchema);
+// Compound index for ordered company-scoped queries
+faqSchema.index({ company: 1, order: 1 });
+
+export const FAQ = mongoose.model('FAQ', faqSchema);
